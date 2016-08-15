@@ -12,8 +12,10 @@ class GaussianSamplerLayer(layers.MergeLayer):
     def get_output_shape_for(self, input_shapes):
         return input_shapes[0] + (self.samples, )
 
-    def get_output_for(self, inputs, **kwargs):
+    def get_output_for(self, inputs, deterministic=False, **kwargs):
         mu, log_var = inputs
+        if deterministic:
+            return TT.repeat(mu[:, :, None], self.samples, axis=2)
         shape=(
                   self.input_shapes[0][0] or inputs[0].shape[0],
                   self.input_shapes[0][1] or inputs[0].shape[1]

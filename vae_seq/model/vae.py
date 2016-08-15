@@ -18,6 +18,8 @@ class VAEModel(object):
             reconstruction_loss = np.float32(0.5 * np.log(2. * np.pi)) + 0.5 * logvar_x + (TT.square(y[:, :, None] - mu_x)) / TT.exp(2. * logvar_x)
             return reconstruction_loss.mean(axis=-1).sum(axis=1) + KL_loss
 
+        self.samples = samples
+
         encoder_sizes = [40, 20]
         decoder_sizes = [30, 30]
         latent_size = 13
@@ -36,12 +38,12 @@ class VAEModel(object):
         mu = layers.DenseLayer(dense, latent_size)
         log_var = layers.DenseLayer(dense, latent_size)
 
-        z_x = sampling.GaussianSamplerLayer(mu, log_var, samples)
+        z_x = sampling.GaussianSamplerLayer(mu, log_var, samples) # returns batch x latent_size x samples
 
         # decoder
-        dense = layers.DimshuffleLayer(z_x, (0, 2, 1))
-        dense = layers.ReshapeLayer(dense, (-1, dense.output_shape[2]))
-
+        dense = layers.DimshuffleLayer(z_x, (0, 2, 1)) # batch x samples x latent
+        dense = layers.ReshapeLayer(dense, (-1, dense.output_shape[2])) # batch . samples x latent
+        dense = dense
         for idx in xrange(depth):
             dense = layers.DenseLayer(dense, decoder_sizes[idx])
             dense = layers.batch_norm(dense)
@@ -73,7 +75,15 @@ class VAEModel(object):
 
         self.latent_output_fn = theano.function(
             [input_var],
-            outputs=layers.get_output(z_x)
+            outputs=layers.get_output(z_x, deterministic=True)
+        )
+
+        self.predict_fn = theano.function(
+            [input_var],
+            outputs=[
+                layers.get_output(mu_x_layer, deterministic=True),
+                layers.get_output(logvar_x_layer, deterministic=True)
+            ]
         )
 
 
