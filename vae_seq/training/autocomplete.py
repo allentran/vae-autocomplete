@@ -3,7 +3,7 @@ import logging
 import numpy as np
 from sklearn.cross_validation import train_test_split
 
-from ..model import vae
+from vae_seq.model import vae
 
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -25,26 +25,22 @@ class AutocompleteVAE(object):
         self.standardize_meta = standardize_meta
 
         self.raw_array = array
-        self.X_means = np.mean(array, axis=0, keepdims=True)
-        self.X_stds = np.std(array, axis=0, keepdims=True)
 
-        self.X = (array - self.X_means) / self.X_stds
-
-        self.model = vae.VAEModel(self.X.shape[1], self.meta.shape[1])
+        self.X = array
+        self.model = vae.VAELasagneModel(self.X.shape[1], self.meta.shape[1], depth=3)
 
     def cleave_data(self, last_idx):
-
-        self.Y = self.X.copy()
-        self.X[:, last_idx + 1:] = 0
+        Y = self.X.copy()
+        Y[:, last_idx + 1:] = 0
+        return Y
 
     def split_data(self, test_frac=0.2):
-
-        X = np.hstack((self.meta, self.X))
-        return train_test_split(X, self.Y, test_size=test_frac)
+        noisy_X = self.cleave_data(3)
+        return train_test_split(noisy_X, self.meta, self.X, test_size=test_frac)
 
     @staticmethod
-    def iterate_minibatches(inputs, targets, batchsize, shuffle=True):
-        assert len(inputs) == len(targets)
+    def iterate_minibatches(inputs, meta, targets, batchsize, shuffle=True):
+        assert len(inputs) == len(targets) == len(meta)
         if shuffle:
             indices = np.arange(len(inputs))
             np.random.shuffle(indices)
@@ -53,11 +49,11 @@ class AutocompleteVAE(object):
                 excerpt = indices[start_idx:start_idx + batchsize]
             else:
                 excerpt = slice(start_idx, start_idx + batchsize)
-            yield inputs[excerpt], targets[excerpt]
+            yield inputs[excerpt], meta[excerpt], targets[excerpt]
 
-    def fit(self, epochs=None, epochs_since_best=10, batchsize=128):
+    def fit(self, epochs=None, epochs_since_best=10, batchsize=100):
 
-        X_train, X_test, y_train, y_test = self.split_data()
+        X_train, X_test, meta_train, meta_test, Y_train, Y_test = self.split_data()
 
         n_epochs = 0
         epochs_since_min = 0
@@ -65,9 +61,9 @@ class AutocompleteVAE(object):
         while True:
             n_epochs += 1
             training_loss = []
-            for x_batch, y_batch in AutocompleteVAE.iterate_minibatches(X_train, y_train, batchsize=batchsize):
-                training_loss += self.model.fit(x_batch, y_batch)
-            test_loss = self.model.loss(X_test, y_test)
+            for x_batch, meta_batch, y_batch in AutocompleteVAE.iterate_minibatches(X_train, meta_train, Y_train, batchsize=batchsize):
+                training_loss.append(float(self.model.fit(x_batch, meta_batch, y_batch)))
+            test_loss = self.model.loss(X_test, meta_test, Y_test)
 
             logger.info("%s epoch: training=%.2f, test=%.2f", n_epochs, np.mean(training_loss), test_loss)
 

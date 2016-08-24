@@ -1,34 +1,31 @@
-
-
+import numpy as np
 import theano
 import theano.tensor as TT
-import numpy as np
-from lasagne import layers, regularization, nonlinearities, updates
+from lasagne import layers, nonlinearities, updates
 
 import sampling
+from vae_seq.model.layers import neg_log_likelihood, neg_log_likelihood2, kl_loss, RandomZeroOutLayer
 
 
-class VAEModel(object):
+class VAELasagneModel(object):
 
     def __init__(self, output_size, meta_size, depth=2, samples=10):
 
-        def neg_log_likelihood(q_mu, q_log_var, y, mu_x, logvar_x):
-
-            KL_loss = -0.5 * TT.sum(1 + q_log_var - TT.square(q_mu) - TT.exp(q_log_var), axis=-1)
-            reconstruction_loss = np.float32(0.5 * np.log(2. * np.pi)) + 0.5 * logvar_x + (TT.square(y[:, :, None] - mu_x)) / TT.exp(2. * logvar_x)
-            return reconstruction_loss.mean(axis=-1).sum(axis=1) + KL_loss
-
         self.samples = samples
 
-        encoder_sizes = [40, 20]
-        decoder_sizes = [30, 30]
-        latent_size = 13
+        encoder_sizes = [64, 64, 64]
+        decoder_sizes = [64, 64, 64]
+        latent_size = 4
 
         input_var = TT.matrix()
+        meta_var = TT.matrix()
         target_var = TT.matrix()
 
-        input_layer = layers.InputLayer((None, output_size + meta_size), input_var=input_var)
-        dense = input_layer
+        input_layer = layers.InputLayer((None, output_size), input_var=input_var)
+        input_layer = RandomZeroOutLayer(input_layer, 3, 6)
+        meta_layer = layers.InputLayer((None, meta_size), input_var=meta_var)
+        concat_input_layer = layers.ConcatLayer([input_layer, meta_layer])
+        dense = concat_input_layer
 
         # encoder
         for idx in xrange(depth):
@@ -57,62 +54,132 @@ class VAEModel(object):
         logvar_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(output_size, None), axis=1)
 
         loss = neg_log_likelihood(
-            layers.get_output(mu),
-            layers.get_output(log_var),
             target_var,
             layers.get_output(mu_x_layer),
             layers.get_output(logvar_x_layer)
-        ).mean()
+        ) + kl_loss(layers.get_output(mu), layers.get_output(log_var))
 
         test_loss = neg_log_likelihood(
-            layers.get_output(mu, deterministic=True),
-            layers.get_output(log_var, deterministic=True),
             target_var,
             layers.get_output(mu_x_layer, deterministic=True),
-            layers.get_output(logvar_x_layer, deterministic=True)
-        ).mean()
+            layers.get_output(logvar_x_layer, deterministic=True),
+        ) + kl_loss(layers.get_output(mu, deterministic=True), layers.get_output(log_var, deterministic=True))
 
         params = layers.get_all_params(mu_and_logvar_x_layer, trainable=True)
-        param_updates = updates.adadelta(loss, params)
+        param_updates = updates.adadelta(loss.mean(), params)
 
         self._train_fn = theano.function(
-            [input_var, target_var],
+            [input_var, meta_var, target_var],
             updates=param_updates,
-            outputs=loss
+            outputs=loss.mean()
         )
 
         self._loss_fn = theano.function(
-            [input_var, target_var],
-            outputs=test_loss
-        )
-
-        self.latent_output_fn = theano.function(
-            [input_var],
-            outputs=layers.get_output(z_x, deterministic=True)
+            [input_var, meta_var, target_var],
+            outputs=test_loss.mean()
         )
 
         self._predict_fn = theano.function(
-            [input_var],
+            [input_var, meta_var],
             outputs=[
                 layers.get_output(mu_x_layer, deterministic=True),
                 layers.get_output(logvar_x_layer, deterministic=True)
             ]
         )
 
-    def fit(self, x_matrix, y_matrix):
+    def fit(self, x_matrix, meta_matrix, y_matrix):
         x = x_matrix.astype('float32')
+        m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
-        return self._train_fn(x, y)
+        return self._train_fn(x, m, y)
 
-    def predict(self, x_matrix):
+    def predict(self, x_matrix, meta_matrix):
         x = x_matrix.astype('float32')
-        mu, logvar = self._predict_fn(x)
+        m = meta_matrix.astype('float32')
+        mu, logvar = self._predict_fn(x, m)
         return mu[:, :, 0], np.exp(logvar[:, :, 0])
 
-    def loss(self, x_matrix, y_matrix):
+    def loss(self, x_matrix, meta_matrix, y_matrix):
         x = x_matrix.astype('float32')
+        m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
-        return self._loss_fn(x, y)
+        return self._loss_fn(x, m, y)
+
+
+class BaselineFeedForwardModel(object):
+
+    def __init__(self, output_size, meta_size, depth=2):
+
+        encoder_sizes = [64, 64, 64]
+
+        input_var = TT.matrix()
+        meta_var = TT.matrix()
+        target_var = TT.matrix()
+
+        input_layer = layers.InputLayer((None, output_size), input_var=input_var)
+        meta_layer = layers.InputLayer((None, meta_size), input_var=meta_var)
+        concat_input_layer = layers.ConcatLayer([input_layer, meta_layer])
+        dense = concat_input_layer
+
+        for idx in xrange(depth):
+            dense = layers.DenseLayer(dense, encoder_sizes[idx])
+            dense = layers.batch_norm(dense)
+
+        mu_and_logvar = layers.DenseLayer(dense, 2 * output_size, nonlinearity=nonlinearities.linear)
+        mu = layers.SliceLayer(mu_and_logvar, slice(0, output_size), axis=1)
+        log_var = layers.SliceLayer(mu_and_logvar, slice(output_size, None), axis=1)
+
+        loss = neg_log_likelihood2(
+            target_var,
+            layers.get_output(mu),
+            layers.get_output(log_var)
+        ).mean()
+
+        test_loss = neg_log_likelihood2(
+            target_var,
+            layers.get_output(mu, deterministic=True),
+            layers.get_output(log_var, deterministic=True),
+        ).mean()
+
+        params = layers.get_all_params(mu_and_logvar, trainable=True)
+        param_updates = updates.adadelta(loss, params)
+
+        self._train_fn = theano.function(
+            [input_var, meta_var, target_var],
+            updates=param_updates,
+            outputs=loss
+        )
+
+        self._loss_fn = theano.function(
+            [input_var, meta_var, target_var],
+            outputs=test_loss
+        )
+
+        self._predict_fn = theano.function(
+            [input_var, meta_var],
+            outputs=[
+                layers.get_output(mu, deterministic=True),
+                layers.get_output(log_var, deterministic=True)
+            ]
+        )
+
+    def fit(self, x_matrix, meta_matrix, y_matrix):
+        x = x_matrix.astype('float32')
+        m = meta_matrix.astype('float32')
+        y = y_matrix.astype('float32')
+        return self._train_fn(x, m, y)
+
+    def predict(self, x_matrix, meta_matrix):
+        x = x_matrix.astype('float32')
+        m = meta_matrix.astype('float32')
+        mu, logvar = self._predict_fn(x, m)
+        return mu, np.exp(logvar)
+
+    def loss(self, x_matrix, meta_matrix, y_matrix):
+        x = x_matrix.astype('float32')
+        m = meta_matrix.astype('float32')
+        y = y_matrix.astype('float32')
+        return self._loss_fn(x, m, y)
 
 
 
