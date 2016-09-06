@@ -21,10 +21,11 @@ class VAEModelTest(unittest.TestCase):
         xs = np.random.normal(size=(32, self.output_size)).astype('float32')
         ms = np.random.normal(size=(32, self.meta_size)).astype('float32')
         ys = np.random.normal(size=(32, self.output_size)).astype('float32')
+        mask = np.random.randint(0, 2, size=(32, self.output_size)).astype('float32')
 
         losses = []
         for _ in xrange(EPOCHS):
-            losses.append(self.model.fit(xs, ms, ys))
+            losses.append(self.model.fit(xs, ms, ys, mask))
 
         self.assertLess(losses[-1], losses[0])
 
@@ -32,8 +33,9 @@ class VAEModelTest(unittest.TestCase):
 
         xs = np.random.normal(size=(32, self.output_size)).astype('float32')
         ms = np.random.normal(size=(32, self.meta_size)).astype('float32')
+        mask = np.random.randint(0, 2, size=(32, self.output_size)).astype('float32')
 
-        xhat, logvar = self.model._predict_fn(xs, ms)
+        xhat, logvar = self.model._predict_fn(xs, ms, mask)
 
         self.assertTrue(xhat.shape, (32, self.output_size, self.model.samples))
         np.testing.assert_array_equal(xhat[:, :, 0], xhat[:, :, 1])
