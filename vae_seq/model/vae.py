@@ -9,30 +9,29 @@ from vae_seq.model.layers import neg_log_likelihood, neg_log_likelihood2, kl_los
 
 class VAELasagneModel(object):
 
-    def __init__(self, output_size, meta_size, depth=2, samples=10, encoder_size=64, decoder_size=64):
+    def __init__(self, full_length, output_size, meta_size, depth=2, samples=10, encoder_size=64, decoder_size=64):
 
         self.samples = samples
 
         latent_size = 4
 
-        input_var = TT.matrix()
-        mask_var = TT.matrix()
-        meta_var = TT.matrix()
+        input_var = TT.tensor3(dtype='float32')
+        meta_var = TT.tensor3(dtype='float32')
         target_var = TT.matrix()
 
-        input_layer = layers.InputLayer((None, output_size), input_var=input_var)
-        meta_layer = layers.InputLayer((None, meta_size), input_var=meta_var)
-        mask_layer = layers.InputLayer((None, output_size), input_var=mask_var)
-        concat_input_layer = layers.ConcatLayer([input_layer, meta_layer, mask_layer])
-        dense = concat_input_layer
+        input_layer = layers.InputLayer((None, None, output_size), input_var=input_var)
+        meta_layer = layers.InputLayer((None, None, meta_size), input_var=meta_var)
+        concat_input_layer = layers.ConcatLayer([input_layer, meta_layer], axis=-1)
 
-        # encoder
-        for idx in xrange(depth):
-            dense = layers.DenseLayer(dense, encoder_size)
-            dense = layers.batch_norm(dense)
+        batchsize, seqlen, _ = input_layer.input_var.shape
 
-        mu = layers.DenseLayer(dense, latent_size)
-        log_var = layers.DenseLayer(dense, latent_size)
+        lstm_layer = layers.LSTMLayer(concat_input_layer, encoder_size / 2, only_return_final=True)
+        lstm_backwards_layer = layers.LSTMLayer(concat_input_layer, encoder_size / 2, only_return_final=True, backwards=True)
+
+        lstm_layer = layers.ConcatLayer([lstm_layer, lstm_backwards_layer])
+
+        mu = layers.DenseLayer(lstm_layer, latent_size)
+        log_var = layers.DenseLayer(lstm_layer, latent_size)
 
         z_x = sampling.GaussianSamplerLayer(mu, log_var, samples) # returns batch x latent_size x samples
 
@@ -44,12 +43,12 @@ class VAELasagneModel(object):
             dense = layers.DenseLayer(dense, decoder_size)
             dense = layers.batch_norm(dense)
 
-        mu_and_logvar_x_layer = layers.DenseLayer(dense, output_size * 2, nonlinearity=nonlinearities.linear)
+        mu_and_logvar_x_layer = layers.DenseLayer(dense, full_length * 2, nonlinearity=nonlinearities.linear)
         mu_and_logvar_x_layer = layers.ReshapeLayer(mu_and_logvar_x_layer, (-1, z_x.samples, mu_and_logvar_x_layer.output_shape[1]))
         mu_and_logvar_x_layer = layers.DimshuffleLayer(mu_and_logvar_x_layer, (0, 2, 1))
 
-        mu_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(0, output_size), axis=1)
-        logvar_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(output_size, None), axis=1)
+        mu_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(0, full_length), axis=1)
+        logvar_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(full_length, None), axis=1)
 
         loss = neg_log_likelihood(
             target_var,
@@ -67,47 +66,44 @@ class VAELasagneModel(object):
         param_updates = updates.adadelta(loss.mean(), params)
 
         self._train_fn = theano.function(
-            [input_var, meta_var, target_var, mask_var],
+            [input_var, meta_var, target_var],
             updates=param_updates,
             outputs=loss.mean()
         )
 
         self._loss_fn = theano.function(
-            [input_var, meta_var, target_var, mask_var],
+            [input_var, meta_var, target_var],
             outputs=test_loss.mean()
         )
 
         self._predict_fn = theano.function(
-            [input_var, meta_var, mask_var],
+            [input_var, meta_var],
             outputs=[
                 layers.get_output(mu_x_layer, deterministic=True),
                 layers.get_output(logvar_x_layer, deterministic=True)
             ]
         )
 
-    def fit(self, x_matrix, meta_matrix, y_matrix, mask):
+    def fit(self, x_matrix, meta_matrix, y_matrix):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
-        mask = mask.astype('float32')
 
-        return self._train_fn(x, m, y, mask)
+        return self._train_fn(x, m, y)
 
-    def predict(self, x_matrix, meta_matrix, mask):
+    def predict(self, x_matrix, meta_matrix):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
-        mask = mask.astype('float32')
 
-        mu, logvar = self._predict_fn(x, m, mask)
+        mu, logvar = self._predict_fn(x, m)
         return mu[:, :, 0], np.exp(logvar[:, :, 0])
 
-    def loss(self, x_matrix, meta_matrix, y_matrix, mask):
+    def loss(self, x_matrix, meta_matrix, y_matrix):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
-        mask = mask.astype('float32')
 
-        return self._loss_fn(x, m, y, mask)
+        return self._loss_fn(x, m, y)
 
 
 class BaselineFeedForwardModel(object):

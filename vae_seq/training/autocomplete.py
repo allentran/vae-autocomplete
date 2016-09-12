@@ -26,7 +26,7 @@ class AutocompleteVAE(object):
 
         self.X = np.log(array) - np.log(array[:, 0])[:, None]
         self.X[~np.isfinite(self.X)] = np.nanmean(self.X[np.isfinite(self.X)])
-        self.model = vae.VAELasagneModel(self.X.shape[1], self.meta.shape[1], samples=20, depth=3)
+        self.model = vae.VAELasagneModel(self.X.shape[1], 1, self.meta.shape[1], samples=20, depth=3)
 
     def split_data(self, test_frac=0.2, stratify=None):
         return train_test_split(self.X, self.meta, test_size=test_frac, stratify=stratify)
@@ -46,16 +46,12 @@ class AutocompleteVAE(object):
 
     def fit(self, epochs=None, epochs_since_best=10, batchsize=100):
 
-        def cut_and_get_mask(x, min_cut=2, max_cut=11, force_cut=5):
+        def cut(x, min_cut=2, max_cut=11, force_cut=5):
             if not force_cut:
                 cut = np.random.randint(min_cut, max_cut)
             else:
                 cut = force_cut
-            mask = np.ones(x.shape)
-            mask[:, cut:] = 0.
-            x_cut = x.copy()
-            x_cut[:, cut:] = 0
-            return x_cut, mask
+            return x.copy()[:, :cut], cut
 
         X_train, X_test, meta_train, meta_test = self.split_data(stratify=self.meta[:, 1])
         n_epochs = 0
@@ -65,10 +61,19 @@ class AutocompleteVAE(object):
             n_epochs += 1
             training_loss = []
             for x_batch, meta_batch in AutocompleteVAE.iterate_minibatches(X_train, meta_train, batchsize=batchsize, shuffle=True):
-                x_cut, mask = cut_and_get_mask(x_batch)
-                training_loss.append(float(self.model.fit(x_cut, meta_batch, x_batch, mask)))
-            x_cut, mask = cut_and_get_mask(X_test, force_cut=5)
-            test_loss = self.model.loss(x_cut, meta_test, X_test, mask)
+                x_cut, n_seq = cut(x_batch)
+                training_loss.append(
+                    self.model.fit(
+                        x_cut[:, :, None],
+                        np.repeat(meta_batch[:, None, :], n_seq, axis=1),
+                        x_batch
+                    )
+                )
+            x_cut, n_seq = cut(X_test, force_cut=5)
+            test_loss = self.model.loss(
+                x_cut[:, :, None],
+                np.repeat(meta_test[:, None, :], n_seq, axis=1),
+                X_test)
 
             logger.info("%s epoch: training=%.2f, test=%.2f", n_epochs, np.mean(training_loss), test_loss)
 
