@@ -12,7 +12,7 @@ class VAEModelTest(unittest.TestCase):
         self.meta_size = 5
         self.n_seq = 7
 
-        self.model = vae.VAELasagneModel(self.n_seq, self.output_size, self.meta_size, samples=2, depth=1)
+        self.model = vae.EncoderDecodeCompleterModel(self.n_seq, self.output_size, self.meta_size, samples=2, depth=1)
         self.batch_size = 32
 
     def train_test(self):
@@ -26,7 +26,7 @@ class VAEModelTest(unittest.TestCase):
 
         losses = []
         for _ in xrange(EPOCHS):
-            losses.append(self.model.fit(xs, ms, ys))
+            losses.append(self.model.fit(xs, ms, ys, cut))
 
         self.assertLess(losses[-1], losses[0])
 

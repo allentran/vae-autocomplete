@@ -1,78 +1,75 @@
 import numpy as np
 import theano
 import theano.tensor as TT
-from lasagne import layers, nonlinearities, updates
+from lasagne import layers, nonlinearities, updates, regularization
 
 import sampling
 from vae_seq.model.layers import neg_log_likelihood, neg_log_likelihood2, kl_loss
 
 
-class VAELasagneModel(object):
+class EncoderDecodeCompleterModel(object):
 
     def __init__(self, full_length, output_size, meta_size, depth=2, samples=10, encoder_size=64, decoder_size=64):
 
         self.samples = samples
 
-        latent_size = 4
+        latent_size = 8
 
         input_var = TT.tensor3(dtype='float32')
         meta_var = TT.tensor3(dtype='float32')
         target_var = TT.matrix()
+        cut_var = TT.scalar(dtype='int32')
 
         input_layer = layers.InputLayer((None, None, output_size), input_var=input_var)
         meta_layer = layers.InputLayer((None, None, meta_size), input_var=meta_var)
+        meta_layer = layers.DropoutLayer(meta_layer, p=0.2)
         concat_input_layer = layers.ConcatLayer([input_layer, meta_layer], axis=-1)
 
-        batchsize, seqlen, _ = input_layer.input_var.shape
+        # encoder
+        lstm_layer = layers.RecurrentLayer(concat_input_layer, encoder_size / 2, learn_init=True)
+        lstm_layer = layers.RecurrentLayer(lstm_layer, encoder_size / 2, only_return_final=True, learn_init=True)
 
-        lstm_layer = layers.LSTMLayer(concat_input_layer, encoder_size / 2, only_return_final=True)
-        lstm_backwards_layer = layers.LSTMLayer(concat_input_layer, encoder_size / 2, only_return_final=True, backwards=True)
-
-        lstm_layer = layers.ConcatLayer([lstm_layer, lstm_backwards_layer])
-
-        mu = layers.DenseLayer(lstm_layer, latent_size)
-        log_var = layers.DenseLayer(lstm_layer, latent_size)
-
-        z_x = sampling.GaussianSamplerLayer(mu, log_var, samples) # returns batch x latent_size x samples
+        encoded = layers.DenseLayer(lstm_layer, latent_size)
+        encoded = layers.batch_norm(encoded)
 
         # decoder
-        dense = layers.DimshuffleLayer(z_x, (0, 2, 1)) # batch x samples x latent
-        dense = layers.ReshapeLayer(dense, (-1, dense.output_shape[2])) # batch . samples x latent
-        dense = dense
+        dense = encoded
         for idx in xrange(depth):
             dense = layers.DenseLayer(dense, decoder_size)
             dense = layers.batch_norm(dense)
 
         mu_and_logvar_x_layer = layers.DenseLayer(dense, full_length * 2, nonlinearity=nonlinearities.linear)
-        mu_and_logvar_x_layer = layers.ReshapeLayer(mu_and_logvar_x_layer, (-1, z_x.samples, mu_and_logvar_x_layer.output_shape[1]))
-        mu_and_logvar_x_layer = layers.DimshuffleLayer(mu_and_logvar_x_layer, (0, 2, 1))
 
         mu_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(0, full_length), axis=1)
         logvar_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(full_length, None), axis=1)
 
+        l2_norm = regularization.regularize_network_params(mu_and_logvar_x_layer, regularization.l2)
+
         loss = neg_log_likelihood(
             target_var,
-            layers.get_output(mu_x_layer),
-            layers.get_output(logvar_x_layer),
-        ) + kl_loss(layers.get_output(mu), layers.get_output(log_var))
+            layers.get_output(mu_x_layer, deterministic=False),
+            layers.get_output(logvar_x_layer, deterministic=False),
+            cut_var
+        ) + 1e-4 * l2_norm
 
         test_loss = neg_log_likelihood(
             target_var,
             layers.get_output(mu_x_layer, deterministic=True),
             layers.get_output(logvar_x_layer, deterministic=True),
-        ) + kl_loss(layers.get_output(mu, deterministic=True), layers.get_output(log_var, deterministic=True))
+            cut_var
+        )
 
         params = layers.get_all_params(mu_and_logvar_x_layer, trainable=True)
         param_updates = updates.adadelta(loss.mean(), params)
 
         self._train_fn = theano.function(
-            [input_var, meta_var, target_var],
+            [input_var, meta_var, target_var, cut_var],
             updates=param_updates,
             outputs=loss.mean()
         )
 
         self._loss_fn = theano.function(
-            [input_var, meta_var, target_var],
+            [input_var, meta_var, target_var, cut_var],
             outputs=test_loss.mean()
         )
 
@@ -84,26 +81,26 @@ class VAELasagneModel(object):
             ]
         )
 
-    def fit(self, x_matrix, meta_matrix, y_matrix):
+    def fit(self, x_matrix, meta_matrix, y_matrix, cut_var):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
 
-        return self._train_fn(x, m, y)
+        return self._train_fn(x, m, y, cut_var)
 
     def predict(self, x_matrix, meta_matrix):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
 
         mu, logvar = self._predict_fn(x, m)
-        return mu[:, :, 0], np.exp(logvar[:, :, 0])
+        return mu, np.exp(logvar)
 
-    def loss(self, x_matrix, meta_matrix, y_matrix):
+    def loss(self, x_matrix, meta_matrix, y_matrix, cut_var):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
 
-        return self._loss_fn(x, m, y)
+        return self._loss_fn(x, m, y, cut_var)
 
 
 class BaselineFeedForwardModel(object):

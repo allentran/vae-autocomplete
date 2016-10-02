@@ -10,7 +10,7 @@ def main():
     meta = np.loadtxt('paper/metas.npy')
 
     vae = AutocompleteVAE(sequences, meta)
-    vae.fit(epochs=30)
+    vae.fit(epochs=150)
 
 if __name__ == "__main__":
     main()

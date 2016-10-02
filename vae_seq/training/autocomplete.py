@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class AutocompleteVAE(object):
 
-    def __init__(self, array, meta, standardize_meta=True):
+    def __init__(self, array, meta, standardize_meta=True, diff=True):
 
         assert array.shape[0] == meta.shape[0]
 
@@ -23,10 +23,12 @@ class AutocompleteVAE(object):
             self.meta = meta
 
         self.standardize_meta = standardize_meta
+        self.X = np.log(array[:, 1:]) - np.log(array[:, 0:-1])
+        drop_mask = (~np.isfinite(self.X)).sum(axis=1) > 0
+        self.X = self.X[~drop_mask, :]
+        self.meta = self.meta[~drop_mask, :]
 
-        self.X = np.log(array) - np.log(array[:, 0])[:, None]
-        self.X[~np.isfinite(self.X)] = np.nanmean(self.X[np.isfinite(self.X)])
-        self.model = vae.VAELasagneModel(self.X.shape[1], 1, self.meta.shape[1], samples=20, depth=3)
+        self.model = vae.EncoderDecodeCompleterModel(self.X.shape[1], 1, self.meta.shape[1], samples=2, depth=3)
 
     def split_data(self, test_frac=0.2, stratify=None):
         return train_test_split(self.X, self.meta, test_size=test_frac, stratify=stratify)
@@ -66,14 +68,17 @@ class AutocompleteVAE(object):
                     self.model.fit(
                         x_cut[:, :, None],
                         np.repeat(meta_batch[:, None, :], n_seq, axis=1),
-                        x_batch
+                        x_batch,
+                        n_seq
                     )
                 )
             x_cut, n_seq = cut(X_test, force_cut=5)
             test_loss = self.model.loss(
                 x_cut[:, :, None],
                 np.repeat(meta_test[:, None, :], n_seq, axis=1),
-                X_test)
+                X_test,
+                n_seq
+            )
 
             logger.info("%s epoch: training=%.2f, test=%.2f", n_epochs, np.mean(training_loss), test_loss)
 
@@ -88,3 +93,6 @@ class AutocompleteVAE(object):
                     epochs_since_min += 1
                     if epochs_since_min > epochs_since_best:
                         break
+
+        import IPython
+        IPython.embed()
