@@ -39,9 +39,5 @@ class VAEModelTest(unittest.TestCase):
 
         xhat, logvar = self.model._predict_fn(xs, ms)
 
-        self.assertTrue(xhat.shape, (32, self.n_seq, self.model.samples))
-        np.testing.assert_array_equal(xhat[:, :, 0], xhat[:, :, 1])
-
-        self.assertTrue(logvar.shape, (32, self.n_seq, self.model.samples))
-        np.testing.assert_array_equal(logvar[:, :, 0], logvar[:, :, 1])
-
+        self.assertTrue(xhat.shape, (32, self.n_seq))
+        self.assertTrue(logvar.shape, (32, self.n_seq))
