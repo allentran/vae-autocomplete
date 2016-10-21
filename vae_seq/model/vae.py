@@ -9,11 +9,9 @@ from vae_seq.model.layers import neg_log_likelihood, neg_log_likelihood2, kl_los
 
 class EncoderDecodeCompleterModel(object):
 
-    def __init__(self, full_length, output_size, meta_size, depth=2, samples=10, encoder_size=64, decoder_size=64):
+    def __init__(self, full_length, output_size, meta_size, depth=2, encoder_size=64, decoder_size=64):
 
-        self.samples = samples
-
-        latent_size = 8
+        latent_size = 16
 
         input_var = TT.tensor3(dtype='float32')
         meta_var = TT.tensor3(dtype='float32')
@@ -88,6 +86,7 @@ class EncoderDecodeCompleterModel(object):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
+        cut_weights = cut_weights.astype('float32')
 
         return self._train_fn(x, m, y, cut_weights)
 
@@ -98,12 +97,13 @@ class EncoderDecodeCompleterModel(object):
         mu, logvar = self._predict_fn(x, m)
         return mu, np.exp(logvar)
 
-    def loss(self, x_matrix, meta_matrix, y_matrix, cut_var):
+    def loss(self, x_matrix, meta_matrix, y_matrix, cut_weights):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
+        cut_weights = cut_weights.astype('float32')
 
-        return self._loss_fn(x, m, y, cut_var)
+        return self._loss_fn(x, m, y, cut_weights)
 
 
 class BaselineFeedForwardModel(object):
