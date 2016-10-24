@@ -87,5 +87,6 @@ class AutocompleteVAE(object):
                     if epochs_since_min > epochs_since_best:
                         break
 
-        import IPython
-        IPython.embed()
+        yhat, yvar = self.model.predict(X_test[:, :, None], np.repeat(meta_test[:, None, :], self.n_seq, axis=1))
+        corr = np.corrcoef(yhat[:, 0, :].flatten(), X_test[:, :].flatten())[0, 1]
+        logger.info("Correlation after a single observation: %.2f" % corr)
