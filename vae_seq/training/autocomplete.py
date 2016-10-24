@@ -27,8 +27,9 @@ class AutocompleteVAE(object):
         drop_mask = (~np.isfinite(self.X)).sum(axis=1) > 0
         self.X = self.X[~drop_mask, :]
         self.meta = self.meta[~drop_mask, :]
+        self.n_seq = self.X.shape[1]
 
-        self.model = vae.EncoderDecodeCompleterModel(self.X.shape[1], 1, self.meta.shape[1], samples=2, depth=3)
+        self.model = vae.EncoderDecodeCompleterModel(self.n_seq, 1, self.meta.shape[1], depth=3)
 
     def split_data(self, test_frac=0.2, stratify=None):
         return train_test_split(self.X, self.meta, test_size=test_frac, stratify=stratify)
@@ -48,36 +49,28 @@ class AutocompleteVAE(object):
 
     def fit(self, epochs=None, epochs_since_best=10, batchsize=100):
 
-        def cut(x, min_cut=2, max_cut=11, force_cut=5):
-            if not force_cut:
-                cut = np.random.randint(min_cut, max_cut)
-            else:
-                cut = force_cut
-            return x.copy()[:, :cut], cut
-
         X_train, X_test, meta_train, meta_test = self.split_data(stratify=self.meta[:, 1])
         n_epochs = 0
         epochs_since_min = 0
         min_loss = 1e10
+        weights = np.ones(self.n_seq)
         while True:
             n_epochs += 1
             training_loss = []
             for x_batch, meta_batch in AutocompleteVAE.iterate_minibatches(X_train, meta_train, batchsize=batchsize, shuffle=True):
-                x_cut, n_seq = cut(x_batch)
                 training_loss.append(
                     self.model.fit(
-                        x_cut[:, :, None],
-                        np.repeat(meta_batch[:, None, :], n_seq, axis=1),
+                        x_batch[:, :, None],
+                        np.repeat(meta_batch[:, None, :], self.n_seq, axis=1),
                         x_batch,
-                        n_seq
+                        weights
                     )
                 )
-            x_cut, n_seq = cut(X_test, force_cut=5)
             test_loss = self.model.loss(
-                x_cut[:, :, None],
-                np.repeat(meta_test[:, None, :], n_seq, axis=1),
+                X_test[:, :, None],
+                np.repeat(meta_test[:, None, :], self.n_seq, axis=1),
                 X_test,
-                n_seq
+                weights
             )
 
             logger.info("%s epoch: training=%.2f, test=%.2f", n_epochs, np.mean(training_loss), test_loss)
