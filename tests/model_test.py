@@ -12,7 +12,7 @@ class VAEModelTest(unittest.TestCase):
         self.meta_size = 5
         self.n_seq = 7
 
-        self.model = vae.EncoderDecodeCompleterModel(self.n_seq, self.output_size, self.meta_size, samples=2, depth=1)
+        self.model = vae.EncoderDecodeCompleterModel(self.n_seq, self.output_size, self.meta_size, depth=1)
         self.batch_size = 32
 
     def train_test(self):
