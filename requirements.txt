@@ -1,6 +1,6 @@
 Keras==1.1.0
 nose==1.3.7
-Lasagne==0.2.dev1
+-e git://github.com/Lasagne/Lasagne.git@6674ed8a1ed6d4ed4c11e42a1cd809f8a84770c6#egg=Lasagne
 -e git://github.com/Theano/Theano.git@a248bf67b434cddf938d658ea7b6ccd299c00510#egg=Theano
 numpy==1.11.2
 PyYAML==3.12
