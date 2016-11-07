@@ -2,7 +2,6 @@ __author__ = 'allentran'
 
 from setuptools import find_packages, setup
 
-
 if __name__ == '__main__':
     name = 'vae_seq'
     setup(
@@ -10,7 +9,7 @@ if __name__ == '__main__':
         version="0.0.0",
         author='Allen Tran',
         author_email='realallentran@gmail.com',
-        description='Complete short sequences using a VAE',
+        description='Complete short sequences',
         packages=find_packages(),
         classifiers=[
             'Development Status :: 4 - Beta',
