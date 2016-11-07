@@ -32,9 +32,6 @@ class AutocompleteVAE(object):
             self.X = array
 
         self.n_seq = self.X.shape[1]
-        self.max_cut = self.X.shape[1]
-        self.min_cut = self.max_cut / 2
-
         self.model = vae.EncoderDecodeCompleterModel(self.X.shape[1], 1, self.meta.shape[1], depth=3)
 
     def split_data(self, test_frac=0.2, stratify=None):
@@ -84,13 +81,6 @@ class AutocompleteVAE(object):
         )
 
         return result[0][:, finite_index, :], result[1][:, finite_index, :]
-
-    def _cut(self, x, force_cut=None):
-        if not force_cut:
-            cut = np.random.randint(self.min_cut, self.max_cut)
-        else:
-            cut = force_cut
-        return x.copy()[:, :cut], cut
 
     def fit(self, epochs=None, epochs_since_best=10, batchsize=100):
 
