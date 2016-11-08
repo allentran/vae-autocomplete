@@ -1,14 +1,12 @@
 from theano import tensor as TT
-from theano.tensor.shared_randomstreams import RandomStreams
-from lasagne import layers
 
 
-def neg_log_likelihood(y, mu_x, logvar_x, cut_var):
+def neg_log_likelihood(y, mu_x, logvar_x, cut_weights):
     clipped_logvar = TT.clip(logvar_x, -5, 5)
-    weights = TT.ones_like(y)
-    weights = TT.set_subtensor(weights[:, :cut_var], 1e-2)
-    reconstruction_loss = 0.5 * clipped_logvar + 0.5 * (TT.square(y - mu_x)) / TT.exp(clipped_logvar)
-    return (weights * reconstruction_loss).sum(axis=1)
+    reconstruction_loss = 0.5 * clipped_logvar + 0.5 * (TT.square(y[:, None, :] - mu_x)) / TT.exp(clipped_logvar)
+    loss_per_seq_upto_t = reconstruction_loss.sum(axis=2)
+    loss_per_seq = cut_weights[None, :] * loss_per_seq_upto_t
+    return loss_per_seq.sum(axis=1)
 
 
 def neg_log_likelihood2(y, mu_x, logvar_x):

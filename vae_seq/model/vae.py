@@ -9,16 +9,14 @@ from vae_seq.model.layers import neg_log_likelihood, neg_log_likelihood2, kl_los
 
 class EncoderDecodeCompleterModel(object):
 
-    def __init__(self, full_length, output_size, meta_size, depth=2, samples=10, encoder_size=64, decoder_size=64):
+    def __init__(self, full_length, output_size, meta_size, depth=2, encoder_size=64, decoder_size=64):
 
-        self.samples = samples
-
-        latent_size = 8
+        latent_size = 16
 
         input_var = TT.tensor3(dtype='float32')
         meta_var = TT.tensor3(dtype='float32')
         target_var = TT.matrix()
-        cut_var = TT.scalar(dtype='int32')
+        cut_weights = TT.vector(dtype='float32')
 
         input_layer = layers.InputLayer((None, None, output_size), input_var=input_var)
         meta_layer = layers.InputLayer((None, None, meta_size), input_var=meta_var)
@@ -27,12 +25,13 @@ class EncoderDecodeCompleterModel(object):
 
         # encoder
         lstm_layer = layers.RecurrentLayer(concat_input_layer, encoder_size / 2, learn_init=True)
-        lstm_layer = layers.RecurrentLayer(lstm_layer, encoder_size / 2, only_return_final=True, learn_init=True)
+        lstm_layer = layers.RecurrentLayer(lstm_layer, encoder_size / 2, learn_init=True)
+
+        lstm_layer = layers.ReshapeLayer(lstm_layer, (-1, encoder_size / 2))
 
         encoded = layers.DenseLayer(lstm_layer, latent_size)
         encoded = layers.batch_norm(encoded)
 
-        # decoder
         dense = encoded
         for idx in xrange(depth):
             dense = layers.DenseLayer(dense, decoder_size)
@@ -41,7 +40,9 @@ class EncoderDecodeCompleterModel(object):
         mu_and_logvar_x_layer = layers.DenseLayer(dense, full_length * 2, nonlinearity=nonlinearities.linear)
 
         mu_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(0, full_length), axis=1)
+        mu_x_layer = layers.ReshapeLayer(mu_x_layer, (-1, full_length, full_length))
         logvar_x_layer = layers.SliceLayer(mu_and_logvar_x_layer, slice(full_length, None), axis=1)
+        logvar_x_layer = layers.ReshapeLayer(logvar_x_layer, (-1, full_length, full_length))
 
         l2_norm = regularization.regularize_network_params(mu_and_logvar_x_layer, regularization.l2)
 
@@ -49,27 +50,27 @@ class EncoderDecodeCompleterModel(object):
             target_var,
             layers.get_output(mu_x_layer, deterministic=False),
             layers.get_output(logvar_x_layer, deterministic=False),
-            cut_var
+            cut_weights
         ) + 1e-4 * l2_norm
 
         test_loss = neg_log_likelihood(
             target_var,
-            layers.get_output(mu_x_layer, deterministic=True),
-            layers.get_output(logvar_x_layer, deterministic=True),
-            cut_var
-        )
+            layers.get_output(mu_x_layer, deterministic=False),
+            layers.get_output(logvar_x_layer, deterministic=False),
+            cut_weights
+        ) + 1e-4 * l2_norm
 
         params = layers.get_all_params(mu_and_logvar_x_layer, trainable=True)
         param_updates = updates.adadelta(loss.mean(), params)
 
         self._train_fn = theano.function(
-            [input_var, meta_var, target_var, cut_var],
+            [input_var, meta_var, target_var, cut_weights],
             updates=param_updates,
             outputs=loss.mean()
         )
 
         self._loss_fn = theano.function(
-            [input_var, meta_var, target_var, cut_var],
+            [input_var, meta_var, target_var, cut_weights],
             outputs=test_loss.mean()
         )
 
@@ -81,12 +82,13 @@ class EncoderDecodeCompleterModel(object):
             ]
         )
 
-    def fit(self, x_matrix, meta_matrix, y_matrix, cut_var):
+    def fit(self, x_matrix, meta_matrix, y_matrix, cut_weights):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
+        cut_weights = cut_weights.astype('float32')
 
-        return self._train_fn(x, m, y, cut_var)
+        return self._train_fn(x, m, y, cut_weights)
 
     def predict(self, x_matrix, meta_matrix):
         x = x_matrix.astype('float32')
@@ -95,12 +97,13 @@ class EncoderDecodeCompleterModel(object):
         mu, logvar = self._predict_fn(x, m)
         return mu, np.exp(logvar)
 
-    def loss(self, x_matrix, meta_matrix, y_matrix, cut_var):
+    def loss(self, x_matrix, meta_matrix, y_matrix, cut_weights):
         x = x_matrix.astype('float32')
         m = meta_matrix.astype('float32')
         y = y_matrix.astype('float32')
+        cut_weights = cut_weights.astype('float32')
 
-        return self._loss_fn(x, m, y, cut_var)
+        return self._loss_fn(x, m, y, cut_weights)
 
 
 class BaselineFeedForwardModel(object):
